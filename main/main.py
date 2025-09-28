@@ -4,7 +4,7 @@ from flask import Flask
 from threading import Thread
 import discord
 from discord.ext import commands
-from discord import app_commands
+from discord import app_commands, ui
 
 # ===== Keep-alive =====
 app = Flask('')
@@ -41,7 +41,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-GUILD_ID = int(os.environ.get("GUILD_ID", "0"))  # optional: restrict to your server
+GUILD_ID = int(os.environ.get("GUILD_ID", "0"))  # restrict to your server
 TICKET_CATEGORIES = {
     "desk": "Desk Support",
     "internal": "Internal Affairs",
@@ -54,62 +54,65 @@ async def on_ready():
     await tree.sync(guild=discord.Object(id=GUILD_ID))
     print(f"Logged in as {bot.user}")
 
-# ===== Ticket panel command =====
-@tree.command(name="panel", description="Show ticket categories panel", guild=discord.Object(id=GUILD_ID))
+# ===== Ticket Panel Buttons =====
+class TicketButton(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key, name in TICKET_CATEGORIES.items():
+            self.add_item(TicketCategoryButton(label=name, category=key))
+
+class TicketCategoryButton(ui.Button):
+    def __init__(self, label, category):
+        super().__init__(label=label, style=discord.ButtonStyle.primary)
+        self.category = category
+
+    async def callback(self, interaction: discord.Interaction):
+        category_name = TICKET_CATEGORIES[self.category]
+        guild = interaction.guild
+        cat = discord.utils.get(guild.categories, name=category_name)
+        if not cat:
+            cat = await guild.create_category(category_name)
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True)
+        }
+
+        channel_name = f"ticket-{interaction.user.name.lower()}"
+        channel = await guild.create_text_channel(channel_name, category=cat, overwrites=overwrites)
+
+        cur.execute("INSERT INTO tickets (user_id, issue, category, status) VALUES (?, ?, ?, ?)",
+                    (interaction.user.id, "No issue provided", category_name, "open"))
+        conn.commit()
+
+        embed = discord.Embed(
+            title=f"Ticket Created: {category_name}",
+            description=f"{interaction.user.mention} opened a ticket.",
+            color=EMBED_COLOR
+        )
+        embed.add_field(name="Channel", value=channel.mention)
+        embed.set_footer(text="Staff will respond shortly.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        ticket_embed = discord.Embed(
+            title="Welcome to your ticket!",
+            description=f"{interaction.user.mention}, a staff member will be with you shortly.",
+            color=EMBED_COLOR
+        )
+        ticket_embed.add_field(name="Category", value=category_name)
+        await channel.send(embed=ticket_embed)
+
+# ===== Panel command =====
+@tree.command(name="panel", description="Show ticket panel", guild=discord.Object(id=GUILD_ID))
 async def panel(interaction: discord.Interaction):
     embed = discord.Embed(
         title="Ticket Panel",
-        description="Click the buttons below to open a ticket in the proper category.",
+        description="Click a button below to open a ticket in the correct category.",
         color=EMBED_COLOR
     )
-    for key, name in TICKET_CATEGORIES.items():
-        embed.add_field(name=name, value=f"Use `/ticket {key} <issue>` to open", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, view=TicketButton(), ephemeral=True)
 
-# ===== Ticket commands =====
-@tree.command(name="ticket", description="Open a ticket", guild=discord.Object(id=GUILD_ID))
-async def ticket(interaction: discord.Interaction, category: str, issue: str):
-    category_name = TICKET_CATEGORIES.get(category.lower())
-    if not category_name:
-        await interaction.response.send_message("Invalid category. Options: desk, internal, hr", ephemeral=True)
-        return
-
-    guild = interaction.guild
-    cat = discord.utils.get(guild.categories, name=category_name)
-    if not cat:
-        cat = await guild.create_category(category_name)
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        interaction.user: discord.PermissionOverwrite(read_messages=True)
-    }
-
-    channel_name = f"ticket-{interaction.user.name.lower()}"
-    channel = await guild.create_text_channel(channel_name, category=cat, overwrites=overwrites)
-
-    cur.execute("INSERT INTO tickets (user_id, issue, category, status) VALUES (?, ?, ?, ?)",
-                (interaction.user.id, issue, category_name, "open"))
-    conn.commit()
-
-    embed = discord.Embed(
-        title=f"Ticket Created: {category_name}",
-        description=f"{interaction.user.mention} opened a ticket.\nIssue: {issue}",
-        color=EMBED_COLOR
-    )
-    embed.add_field(name="Channel", value=channel.mention)
-    embed.set_footer(text="Staff will respond shortly.")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    ticket_embed = discord.Embed(
-        title="Welcome to your ticket!",
-        description=f"{interaction.user.mention}, a staff member will be with you shortly.",
-        color=EMBED_COLOR
-    )
-    ticket_embed.add_field(name="Issue", value=issue)
-    ticket_embed.add_field(name="Category", value=category_name)
-    await channel.send(embed=ticket_embed)
-
-# ===== Claim ticket =====
+# ===== Slash commands =====
 @tree.command(name="claim", description="Claim a ticket", guild=discord.Object(id=GUILD_ID))
 async def claim(interaction: discord.Interaction):
     channel = interaction.channel
@@ -123,7 +126,6 @@ async def claim(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed)
 
-# ===== Add user =====
 @tree.command(name="add", description="Add a user to a ticket", guild=discord.Object(id=GUILD_ID))
 async def add(interaction: discord.Interaction, member: discord.Member):
     channel = interaction.channel
@@ -138,7 +140,6 @@ async def add(interaction: discord.Interaction, member: discord.Member):
     )
     await interaction.response.send_message(embed=embed)
 
-# ===== Remove user =====
 @tree.command(name="remove", description="Remove a user from a ticket", guild=discord.Object(id=GUILD_ID))
 async def remove(interaction: discord.Interaction, member: discord.Member):
     channel = interaction.channel
