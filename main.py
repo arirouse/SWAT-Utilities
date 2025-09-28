@@ -5,6 +5,21 @@ from discord.ui import View, Button, Select, Modal, TextInput
 import os
 import asyncio
 
+from flask import Flask
+from threading import Thread
+
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is alive!"
+
+def run():
+    app.run(host="0.0.0.0", port=8080)
+
+# Run Flask in a separate thread
+Thread(target=run).start()
+
 TOKEN = os.getenv("DISCORD_TOKEN")  # Set this in Render environment variables
 GUILD_ID = int(os.getenv("GUILD_ID"))  # Your server ID
 TICKET_CATEGORY_NAMES = {
