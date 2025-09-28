@@ -1,177 +1,209 @@
-import os
 import discord
 from discord.ext import commands
-from discord import app_commands
-from discord.ui import Select, View, Button
+from discord import app_commands, ui
+import os
+from flask import Flask
+import asyncio
 
+# --- Environment Variables ---
+TOKEN = os.getenv("DISCORD_TOKEN")           # Your bot token
+GUILD_ID = int(os.getenv("GUILD_ID"))        # Server ID
+DESK_CATEGORY_ID = int(os.getenv("DESK_CATEGORY_ID"))
+IA_CATEGORY_ID = int(os.getenv("IA_CATEGORY_ID"))
+HR_CATEGORY_ID = int(os.getenv("HR_CATEGORY_ID"))
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+MOD_ROLE_ID = int(os.getenv("MOD_ROLE_ID"))
+SAY_ROLE_ID = int(os.getenv("SAY_ROLE_ID"))
+
+# --- Bot Setup ---
 intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
 intents.members = True
-
-TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-DESK_CATEGORY = int(os.getenv("DESK_CATEGORY_ID"))
-IA_CATEGORY = int(os.getenv("IA_CATEGORY_ID"))
-HR_CATEGORY = int(os.getenv("HR_CATEGORY_ID"))
-LOG_CHANNEL = int(os.getenv("LOG_CHANNEL_ID"))
-EMOJI_1 = os.getenv("EMOJI_1")  # custom server emoji pasted
-MOD_ROLE = int(os.getenv("MOD_ROLE_ID"))
-SAY_ROLE = int(os.getenv("SAY_ROLE_ID"))
-
+intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
-tree = bot.tree
 
-# ---------- Helper Functions ----------
+# --- Flask App for Uptime ---
+app = Flask(__name__)
 
-def format_user(user: discord.Member):
-    return f"{user} (ID: {user.id})"  # no ping
+@app.route("/")
+def home():
+    return "Bot is running!"
 
-async def log_action(message: str):
-    channel = bot.get_channel(LOG_CHANNEL)
-    if channel:
-        await channel.send(embed=discord.Embed(
-            description=message,
-            color=0x313D61
-        ))
+def run_flask():
+    app.run(host="0.0.0.0", port=10000)
 
-def get_category(category_name: str):
-    if category_name.lower() == "desk":
-        return DESK_CATEGORY
-    elif category_name.lower() == "ia":
-        return IA_CATEGORY
-    elif category_name.lower() == "hr":
-        return HR_CATEGORY
-    else:
-        return None
+# --- Utilities ---
+def mod_only(interaction: discord.Interaction):
+    return MOD_ROLE_ID in [role.id for role in interaction.user.roles]
 
-# ---------- Ticket Panel ----------
+async def log_action(embed: discord.Embed):
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(embed=embed)
 
-class TicketDropdown(Select):
+# --- Ticket Dropdown ---
+class TicketDropdown(ui.Select):
     def __init__(self):
-        options=[
-            discord.SelectOption(label="Desk Support", description="Desk inquiries", emoji="💼"),
-            discord.SelectOption(label="Internal Affairs", description="Reports/cases", emoji="⚖️"),
-            discord.SelectOption(label="HR+ Support", description="Speak to Director/HR", emoji="📝")
+        options = [
+            discord.SelectOption(label="Desk Support", description="Inquiries, questions. Typically faster responses and age verification.", value="desk"),
+            discord.SelectOption(label="Internal Affairs", description="Handling Officer reports, cases. Requires department lawyers.", value="ia"),
+            discord.SelectOption(label="HR+ Support", description="Speaking to Director/SHR+, told by HR to open etc.", value="hr")
         ]
-        super().__init__(placeholder="Select ticket type", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Select a category...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        category_id = get_category(self.values[0])
-        if not category_id:
-            await interaction.response.send_message("Category not found.", ephemeral=True)
-            return
-        category = bot.get_channel(category_id)
-        channel = await category.create_text_channel(
-            name=f"{self.values[0]}-{interaction.user.name}",
-            topic=f"Ticket for {interaction.user}",
-        )
+        category_map = {
+            "desk": DESK_CATEGORY_ID,
+            "ia": IA_CATEGORY_ID,
+            "hr": HR_CATEGORY_ID
+        }
+        category_id = category_map[self.values[0]]
+        guild = interaction.guild
+        category = guild.get_channel(category_id)
+
+        # Create ticket channel
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.get_role(MOD_ROLE_ID): discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        channel_name = f"ticket-{interaction.user.name.lower()}"
+        ticket_channel = await guild.create_text_channel(channel_name, overwrites=overwrites, category=category)
+
+        # Ticket embed
         embed = discord.Embed(
-            title=f"Ticket Created",
-            description=f"{EMOJI_1} Ticket for {interaction.user} in {self.values[0]} category",
+            title=":emoji_1: Ticket Created",
+            description=f"Ticket opened by {interaction.user} ({interaction.user.id})\nCategory: {self.values[0].title()}",
             color=0x313D61
         )
-        await channel.send(embed=embed)
-        await interaction.response.send_message(f"Ticket created: {channel.mention}", ephemeral=True)
-        await log_action(f"Ticket opened by {format_user(interaction.user)} in {self.values[0]}")
+        await ticket_channel.send(embed=embed)
 
-class TicketView(View):
+        # Log
+        log_embed = discord.Embed(
+            title=":emoji_1: Ticket Opened",
+            description=f"User: {interaction.user} ({interaction.user.id})\nCategory: {self.values[0].title()}",
+            color=0x313D61
+        )
+        await log_action(log_embed)
+        await interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
+
+class TicketView(ui.View):
     def __init__(self):
         super().__init__()
         self.add_item(TicketDropdown())
 
-@tree.command(name="panel", description="Send ticket panel")
+# --- Commands ---
+@bot.tree.command(name="panel", description="Send the ticket panel")
 async def panel(interaction: discord.Interaction):
-    if not any(role.id == MOD_ROLE for role in interaction.user.roles):
-        await interaction.response.send_message("You do not have permission to send the ticket panel.", ephemeral=True)
+    if not mod_only(interaction):
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
         return
     embed = discord.Embed(
-        title="Ticket Panel",
-        description=f"{EMOJI_1} Select your ticket type below",
+        title=":emoji_1: Ticket Panel",
+        description="Select the appropriate ticket category below.",
         color=0x313D61
     )
     await interaction.response.send_message(embed=embed, view=TicketView())
 
-# ---------- Add/Remove Commands ----------
-
-@tree.command(name="add", description="Add a user to a ticket")
-@app_commands.describe(user="User to add")
-async def add(interaction: discord.Interaction, user: discord.Member):
-    channel = interaction.channel
-    await channel.set_permissions(user, read_messages=True, send_messages=True)
-    embed = discord.Embed(
-        description=f"✅ {format_user(user)} added to this ticket.",
-        color=0x00FF00
-    )
-    await interaction.response.send_message(embed=embed)
-    await log_action(f"{format_user(user)} added to ticket {channel.name} by {format_user(interaction.user)}")
-
-@tree.command(name="remove", description="Remove a user from a ticket")
-@app_commands.describe(user="User to remove")
-async def remove(interaction: discord.Interaction, user: discord.Member):
-    channel = interaction.channel
-    await channel.set_permissions(user, overwrite=None)
-    embed = discord.Embed(
-        description=f"❌ {format_user(user)} removed from this ticket.",
-        color=0xFF0000
-    )
-    await interaction.response.send_message(embed=embed)
-    await log_action(f"{format_user(user)} removed from ticket {channel.name} by {format_user(interaction.user)}")
-
-# ---------- Moderation Commands ----------
-
-@tree.command(name="kick", description="Kick a member")
-@app_commands.describe(user="User to kick", reason="Reason for kick")
-async def kick(interaction: discord.Interaction, user: discord.Member, reason: str="No reason provided"):
-    if not any(role.id == MOD_ROLE for role in interaction.user.roles):
+# --- Mod Commands ---
+async def mod_action(interaction: discord.Interaction, user: discord.Member, action: str, reason: str, extra=None):
+    if not mod_only(interaction):
         await interaction.response.send_message("You do not have permission.", ephemeral=True)
         return
+    # Action embed
+    embed = discord.Embed(
+        title=f":emoji_1: {action.title()}",
+        description=f"User: {user} ({user.id})\nBy: {interaction.user} ({interaction.user.id})\nReason: {reason}",
+        color=0x313D61
+    )
+    await log_action(embed)
+    await interaction.response.send_message(f"{action.title()} executed on {user.name}", ephemeral=True)
+
+@bot.tree.command(name="kick", description="Kick a user")
+@app_commands.describe(user="The user to kick", reason="Reason for action")
+async def kick(interaction: discord.Interaction, user: discord.Member, reason: str):
+    await mod_action(interaction, user, "Kick", reason)
     await user.kick(reason=reason)
-    await interaction.response.send_message(f"{user} kicked.")
-    await log_action(f"{format_user(user)} was kicked by {format_user(interaction.user)}. Reason: {reason}")
 
-@tree.command(name="ban", description="Ban a member")
-@app_commands.describe(user="User to ban", reason="Reason for ban")
-async def ban(interaction: discord.Interaction, user: discord.Member, reason: str="No reason provided"):
-    if not any(role.id == MOD_ROLE for role in interaction.user.roles):
-        await interaction.response.send_message("You do not have permission.", ephemeral=True)
-        return
+@bot.tree.command(name="ban", description="Ban a user")
+@app_commands.describe(user="The user to ban", reason="Reason for action")
+async def ban(interaction: discord.Interaction, user: discord.Member, reason: str):
+    await mod_action(interaction, user, "Ban", reason)
     await user.ban(reason=reason)
-    await interaction.response.send_message(f"{user} banned.")
-    await log_action(f"{format_user(user)} was banned by {format_user(interaction.user)}. Reason: {reason}")
 
-@tree.command(name="purge", description="Delete messages")
-@app_commands.describe(amount="Number of messages")
-async def purge(interaction: discord.Interaction, amount: int):
-    if not any(role.id == MOD_ROLE for role in interaction.user.roles):
+@bot.tree.command(name="timeout", description="Timeout a user")
+@app_commands.describe(user="User to timeout", duration="Duration in seconds", reason="Reason for action")
+async def timeout(interaction: discord.Interaction, user: discord.Member, duration: int, reason: str):
+    await mod_action(interaction, user, "Timeout", reason)
+    await user.timeout(discord.Duration(seconds=duration), reason=reason)
+
+@bot.tree.command(name="purge", description="Delete messages in a channel")
+@app_commands.describe(amount="Number of messages to delete", reason="Reason for action")
+async def purge(interaction: discord.Interaction, amount: int, reason: str):
+    if not mod_only(interaction):
         await interaction.response.send_message("You do not have permission.", ephemeral=True)
         return
     deleted = await interaction.channel.purge(limit=amount)
     embed = discord.Embed(
-        description=f"🧹 Purged {len(deleted)} messages by {format_user(interaction.user)}",
+        title=":emoji_1: Messages Purged",
+        description=f"Deleted {len(deleted)} messages\nBy: {interaction.user} ({interaction.user.id})\nReason: {reason}",
         color=0x313D61
     )
-    await interaction.response.send_message(embed=embed)
-    await log_action(f"{len(deleted)} messages purged in {interaction.channel.name} by {format_user(interaction.user)}")
+    await log_action(embed)
+    await interaction.response.send_message(f"Deleted {len(deleted)} messages.", ephemeral=True)
 
-@tree.command(name="say", description="Bot says something")
-@app_commands.describe(message="Message to send")
-async def say(interaction: discord.Interaction, message: str):
-    if not any(role.id == SAY_ROLE for role in interaction.user.roles):
+@bot.tree.command(name="lock", description="Lock a channel")
+@app_commands.describe(reason="Reason for locking")
+async def lock(interaction: discord.Interaction, reason: str):
+    if not mod_only(interaction):
         await interaction.response.send_message("You do not have permission.", ephemeral=True)
         return
-    await interaction.channel.send(message)
+    overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = False
+    await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
+    embed = discord.Embed(
+        title=":emoji_1: Channel Locked",
+        description=f"Channel: {interaction.channel.name}\nBy: {interaction.user} ({interaction.user.id})\nReason: {reason}",
+        color=0x313D61
+    )
+    await log_action(embed)
+    await interaction.response.send_message("Channel locked.", ephemeral=True)
 
-@tree.command(name="ping", description="Check bot latency")
+@bot.tree.command(name="unlock", description="Unlock a channel")
+@app_commands.describe(reason="Reason for unlocking")
+async def unlock(interaction: discord.Interaction, reason: str):
+    if not mod_only(interaction):
+        await interaction.response.send_message("You do not have permission.", ephemeral=True)
+        return
+    overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = True
+    await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
+    embed = discord.Embed(
+        title=":emoji_1: Channel Unlocked",
+        description=f"Channel: {interaction.channel.name}\nBy: {interaction.user} ({interaction.user.id})\nReason: {reason}",
+        color=0x313D61
+    )
+    await log_action(embed)
+    await interaction.response.send_message("Channel unlocked.", ephemeral=True)
+
+@bot.tree.command(name="say", description="Make the bot say something")
+@app_commands.describe(message="Message to send")
+async def say(interaction: discord.Interaction, message: str):
+    if SAY_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        await interaction.response.send_message("You do not have permission.", ephemeral=True)
+        return
+    await interaction.response.send_message(message)
+
+@bot.tree.command(name="ping", description="Check latency")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"Pong! {round(bot.latency*1000)}ms")
 
-# ---------- Bot Startup ----------
+# --- Run Bot ---
+async def main():
+    async with bot:
+        await bot.start(TOKEN)
 
-@bot.event
-async def on_ready():
-    guild = bot.get_guild(GUILD_ID)
-    await tree.sync(guild=guild)
-    print(f"Logged in as {bot.user} ({bot.user.id})")
-
-bot.run(TOKEN)
+# Run Flask in a background thread
+loop = asyncio.get_event_loop()
+loop.create_task(bot.start(TOKEN))
+loop.run_in_executor(None, run_flask)
+loop.run_forever()
