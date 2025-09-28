@@ -1,217 +1,129 @@
+import os
 import discord
 from discord.ext import commands
-from discord import app_commands, ui, Interaction
-from discord.ui import View, Button, Select, Modal, TextInput
-import os
-import asyncio
-
+from discord import app_commands, Interaction, ButtonStyle
+from discord.ui import View, Button
 from flask import Flask
-from threading import Thread
+import threading
 
-app = Flask("")
-
-@app.route("/")
-def home():
-    return "Bot is alive!"
-
-def run():
-    app.run(host="0.0.0.0", port=8080)
-
-# Run Flask in a separate thread
-Thread(target=run).start()
-
-TOKEN = os.getenv("DISCORD_TOKEN")  # Set this in Render environment variables
-GUILD_ID = int(os.getenv("GUILD_ID"))  # Your server ID
-TICKET_CATEGORY_NAMES = {
-    "desk": "Desk Support",
-    "internal": "Internal Affairs",
-    "hr": "HR+ Support"
-}
-EMOJI_SERVER = ":emoji_1:"  # Replace with actual emoji or unicode
-EMBED_COLOR = 0x313D61
-
-intents = discord.Intents.default()
-intents.members = True
-intents.guilds = True
-intents.messages = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-class TicketReasonModal(Modal, title="Ticket Reason"):
-    reason_input = TextInput(label="Issue / Reason", style=discord.TextStyle.paragraph, required=True)
-
-    def __init__(self, category_key, author):
-        super().__init__()
-        self.category_key = category_key
-        self.author = author
-
-    async def on_submit(self, interaction: Interaction):
-        guild = interaction.guild
-        category_name = TICKET_CATEGORY_NAMES[self.category_key]
-
-        # Find or create the Discord category
-        category = discord.utils.get(guild.categories, name=category_name)
-        if not category:
-            category = await guild.create_category(category_name)
-
-        # Create the ticket channel
-        channel_name = f"ticket-{self.author.name}".lower()
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            self.author: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        # Allow staff roles (assumes role names include 'Staff'; adjust as needed)
-        for role in guild.roles:
-            if "Staff" in role.name:
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-        ticket_channel = await guild.create_text_channel(
-            channel_name,
-            category=category,
-            overwrites=overwrites
-        )
-
-        # Send ticket embed
-        embed = discord.Embed(
-            title=f"{EMOJI_SERVER} Ticket Created",
-            description=f"Hello {self.author.mention}! A staff member will be with you shortly.",
-            color=EMBED_COLOR
-        )
-        embed.add_field(name="Category", value=category_name, inline=False)
-        embed.add_field(name="User", value=self.author.mention, inline=False)
-        embed.add_field(name="Issue", value=self.reason_input.value, inline=False)
-        embed.set_footer(text="Staff will respond here shortly.")
-
-        # Send buttons view
-        view = TicketButtonsView(ticket_channel, self.author)
-        await ticket_channel.send(embed=embed, view=view)
-        await interaction.response.send_message(f"Your ticket has been created: {ticket_channel.mention}", ephemeral=True)
-
-class TicketButtonsView(View):
-    def __init__(self, ticket_channel, author):
-        super().__init__(timeout=None)
-        self.ticket_channel = ticket_channel
-        self.author = author
-
-        # Buttons
-        self.add_item(Button(label="Claim", style=discord.ButtonStyle.success, custom_id="claim"))
-        self.add_item(Button(label="Add User", style=discord.ButtonStyle.primary, custom_id="add"))
-        self.add_item(Button(label="Remove User", style=discord.ButtonStyle.primary, custom_id="remove"))
-        self.add_item(Button(label="Close", style=discord.ButtonStyle.danger, custom_id="close"))
-
-    @discord.ui.button(label="Claim", style=discord.ButtonStyle.success, custom_id="claim")
-    async def claim(self, interaction: Interaction, button: Button):
-        embed = discord.Embed(
-            title=f"{EMOJI_SERVER} Ticket Claimed",
-            description=f"{interaction.user.mention} has claimed this ticket.",
-            color=EMBED_COLOR
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=False)
-
-    @discord.ui.button(label="Add User", style=discord.ButtonStyle.primary, custom_id="add")
-    async def add_user(self, interaction: Interaction, button: Button):
-        modal = AddRemoveUserModal(action="add", ticket_channel=self.ticket_channel)
-        await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="Remove User", style=discord.ButtonStyle.primary, custom_id="remove")
-    async def remove_user(self, interaction: Interaction, button: Button):
-        modal = AddRemoveUserModal(action="remove", ticket_channel=self.ticket_channel)
-        await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="close")
-    async def close_ticket(self, interaction: Interaction, button: Button):
-        embed = discord.Embed(
-            title=f"{EMOJI_SERVER} Ticket Closed",
-            description="This ticket has been closed.",
-            color=EMBED_COLOR
-        )
-        await self.ticket_channel.send(embed=embed)
-        await asyncio.sleep(2)
-        await self.ticket_channel.delete()
-
-class AddRemoveUserModal(Modal, title="Modify Ticket Users"):
-    user_input = TextInput(label="@mention the user", style=discord.TextStyle.short, required=True)
-
-    def __init__(self, action, ticket_channel):
-        super().__init__()
-        self.action = action
-        self.ticket_channel = ticket_channel
-
-    async def on_submit(self, interaction: Interaction):
-        guild = interaction.guild
-        user_mention = self.user_input.value
-        try:
-            user_id = int(user_mention.strip("<@!>"))
-            user = guild.get_member(user_id)
-        except:
-            await interaction.response.send_message("Invalid user mention.", ephemeral=True)
-            return
-
-        if self.action == "add":
-            await self.ticket_channel.set_permissions(user, read_messages=True, send_messages=True)
-            embed = discord.Embed(
-                title=f"{EMOJI_SERVER} User Added",
-                description=f"{user.mention} has been added to this ticket.",
-                color=EMBED_COLOR
-            )
-        else:
-            await self.ticket_channel.set_permissions(user, overwrite=None)
-            embed = discord.Embed(
-                title=f"{EMOJI_SERVER} User Removed",
-                description=f"{user.mention} has been removed from this ticket.",
-                color=EMBED_COLOR
-            )
-        await self.ticket_channel.send(embed=embed)
-        await interaction.response.send_message(f"{self.action.capitalize()}ed {user.mention}.", ephemeral=True)
-
-class TicketCategoryDropdown(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        options = [
-            discord.SelectOption(label="Desk Support", value="desk", description="Inquiries, questions. Typically faster responses and age verification.", emoji=":icon5:"),
-            discord.SelectOption(label="Internal Affairs", value="internal", description="Handling Officer reports, cases. This requires department lawyers.", emoji=":icon4:"),
-            discord.SelectOption(label="HR+ Support", value="hr", description="Speaking to Director/SHR+, told by HR to open and etc.", emoji=":icon6:")
-        ]
-        self.add_item(Select(placeholder="Select a ticket category...", options=options, custom_id="ticket_dropdown"))
-
-    @discord.ui.select(custom_id="ticket_dropdown", placeholder="Select a ticket category...")
-    async def select_callback(self, interaction: Interaction, select: Select):
-        modal = TicketReasonModal(category_key=select.values[0], author=interaction.user)
-        await interaction.response.send_modal(modal)
-
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    guild = discord.Object(id=GUILD_ID)
-    try:
-        # Send the ticket panel to a specific channel, adjust CHANNEL_ID
-        channel = bot.get_channel(int(os.getenv("TICKET_PANEL_CHANNEL")))
-        embed = discord.Embed(
-            title=f"{EMOJI_SERVER} Guidelines",
-            description="Tickets are designed for serious support matters only. Always select the correct category and clearly explain your issue so staff can assist quickly. Misuse of the ticket system may lead to warnings, closures, or disciplinary action.",
-            color=EMBED_COLOR
-        )
-        view = TicketCategoryDropdown()
-        await channel.send(embed=embed, view=view)
-    except Exception as e:
-        print("Could not send ticket panel:", e)
-
-# Keep-alive for Render
-from flask import Flask
-from threading import Thread
-
-app = Flask("")
+# Flask app for uptime
+app = Flask(__name__)
 
 @app.route("/")
 def home():
     return "Bot is running!"
 
-def run():
+def run_flask():
     app.run(host="0.0.0.0", port=8080)
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+# Discord bot setup
+intents = discord.Intents.default()
+intents.guilds = True
+intents.members = True
+intents.message_content = True
 
-keep_alive()
-bot.run(TOKEN)
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# ENV variables
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = int(os.getenv("GUILD_ID"))
+DESK_CATEGORY = int(os.getenv("DESK_CATEGORY"))
+HR_CATEGORY = int(os.getenv("HR_CATEGORY"))
+IA_CATEGORY = int(os.getenv("IA_CATEGORY"))
+LOG_CHANNEL = int(os.getenv("LOG_CHANNEL"))
+
+# ---------------- Ticket Panel ----------------
+class TicketView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(Button(label="Desk", style=ButtonStyle.green, custom_id="desk"))
+        self.add_item(Button(label="HR", style=ButtonStyle.blurple, custom_id="hr"))
+        self.add_item(Button(label="IA", style=ButtonStyle.gray, custom_id="ia"))
+
+    @discord.ui.button(label="Desk", style=ButtonStyle.green, custom_id="desk")
+    async def desk(self, interaction: Interaction, button: Button):
+        await self.create_ticket(interaction, "desk", DESK_CATEGORY)
+
+    @discord.ui.button(label="HR", style=ButtonStyle.blurple, custom_id="hr")
+    async def hr(self, interaction: Interaction, button: Button):
+        await self.create_ticket(interaction, "hr", HR_CATEGORY)
+
+    @discord.ui.button(label="IA", style=ButtonStyle.gray, custom_id="ia")
+    async def ia(self, interaction: Interaction, button: Button):
+        await self.create_ticket(interaction, "ia", IA_CATEGORY)
+
+    async def create_ticket(self, interaction, ticket_type, category_id):
+        guild = interaction.guild
+        category = guild.get_channel(category_id)
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        }
+
+        ticket_channel = await guild.create_text_channel(
+            f"{ticket_type}-ticket-{interaction.user.name}",
+            category=category,
+            overwrites=overwrites
+        )
+
+        log_channel = guild.get_channel(LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(f"📥 Ticket created by {interaction.user.mention}: {ticket_channel.mention}")
+
+        await interaction.response.send_message(f"✅ Ticket created: {ticket_channel.mention}", ephemeral=True)
+
+# ---------------- Slash Commands ----------------
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+
+# Panel command
+@bot.tree.command(name="panel", description="Send the ticket panel embed", guild=discord.Object(id=GUILD_ID))
+async def panel(interaction: Interaction):
+    embed = discord.Embed(title="Support Tickets", description="Click a button below to open a ticket.", color=0x00ff00)
+    await interaction.channel.send(embed=embed, view=TicketView())
+    await interaction.response.send_message("✅ Panel created", ephemeral=True)
+
+# Close ticket
+@bot.tree.command(name="close", description="Close the current ticket", guild=discord.Object(id=GUILD_ID))
+async def close(interaction: Interaction):
+    if isinstance(interaction.channel, discord.TextChannel):
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL)
+        if log_channel:
+            await log_channel.send(f"📤 Ticket closed by {interaction.user.mention}: {interaction.channel.name}")
+        await interaction.channel.delete()
+    else:
+        await interaction.response.send_message("This is not a ticket channel.", ephemeral=True)
+
+# ---------------- Moderation Commands ----------------
+@bot.tree.command(name="kick", description="Kick a user", guild=discord.Object(id=GUILD_ID))
+async def kick(interaction: Interaction, member: discord.Member, reason: str = "No reason provided"):
+    await member.kick(reason=reason)
+    await interaction.response.send_message(f"✅ {member.mention} has been kicked. Reason: {reason}")
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL)
+    if log_channel:
+        await log_channel.send(f"👢 {member} was kicked by {interaction.user.mention}. Reason: {reason}")
+
+@bot.tree.command(name="ban", description="Ban a user", guild=discord.Object(id=GUILD_ID))
+async def ban(interaction: Interaction, member: discord.Member, reason: str = "No reason provided"):
+    await member.ban(reason=reason)
+    await interaction.response.send_message(f"✅ {member.mention} has been banned. Reason: {reason}")
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL)
+    if log_channel:
+        await log_channel.send(f"🔨 {member} was banned by {interaction.user.mention}. Reason: {reason}")
+
+@bot.tree.command(name="timeout", description="Timeout a user (in minutes)", guild=discord.Object(id=GUILD_ID))
+async def timeout(interaction: Interaction, member: discord.Member, minutes: int, reason: str = "No reason provided"):
+    until = discord.utils.utcnow() + discord.timedelta(minutes=minutes)
+    await member.timeout(until, reason=reason)
+    await interaction.response.send_message(f"✅ {member.mention} has been timed out for {minutes} minutes. Reason: {reason}")
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL)
+    if log_channel:
+        await log_channel.send(f"⏰ {member} was timed out by {interaction.user.mention} for {minutes} minutes. Reason: {reason}")
+
+# ---------------- Run Bot + Flask ----------------
+if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
+    bot.run(TOKEN)
