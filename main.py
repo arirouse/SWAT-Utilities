@@ -190,5 +190,11 @@ async def remove_user(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.send_message(f"{member.mention} has been removed from the ticket.", ephemeral=True)
     await log_action("User Removed from Ticket", interaction.user, ticket_channel, f"Removed {member.mention}")
 
+# --- Bot Activity ---
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Created by RE3"))
+
 # --- Start bot ---
 bot.run(BOT_TOKEN)
