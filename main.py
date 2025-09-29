@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord import app_commands, ui
 from flask import Flask
 import asyncio
+import time
 
 # ------------------------------
 # Load environment variables
@@ -26,6 +27,20 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# ------------------------------
+# Logging Helper
+# ------------------------------
+async def log_action(action: str, user: discord.Member, channel: discord.TextChannel, reason: str = None):
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if not log_channel:
+        return
+    embed = discord.Embed(title=f":page_facing_up: {action}", color=discord.Color.blue())
+    embed.add_field(name="User", value=user.mention, inline=True)
+    embed.add_field(name="Channel", value=channel.mention, inline=True)
+    if reason:
+        embed.add_field(name="Reason", value=reason, inline=False)
+    await log_channel.send(embed=embed)
 
 # ------------------------------
 # Ticket Dropdown
@@ -65,11 +80,14 @@ class TicketDropdown(ui.Select):
 
         async def claim_callback(i):
             await i.response.send_message(f"Ticket claimed by {i.user.mention}", ephemeral=True)
+            await log_action("Claimed Ticket", i.user, channel)
 
         async def unclaim_callback(i):
             await i.response.send_message(f"Ticket unclaimed by {i.user.mention}", ephemeral=True)
+            await log_action("Unclaimed Ticket", i.user, channel)
 
         async def close_callback(i):
+            await log_action("Closed Ticket", i.user, channel)
             await channel.delete()
 
         claim_button.callback = claim_callback
@@ -77,6 +95,7 @@ class TicketDropdown(ui.Select):
         close_button.callback = close_callback
 
         await channel.send(embed=embed, view=view)
+        await log_action("Created Ticket", user, channel)
         await interaction.response.send_message("Ticket created!", ephemeral=True)
 
 # ------------------------------
@@ -103,13 +122,18 @@ async def say(interaction: discord.Interaction, message: str):
         return
     await interaction.channel.send(message)
     await interaction.response.send_message("Message sent.", ephemeral=True)
+    await log_action("Say Command", interaction.user, interaction.channel, reason=message)
 
 # ------------------------------
 # /ping Command
 # ------------------------------
 @bot.tree.command(name="ping", description="Check if bot is online")
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("Pong!", ephemeral=True)
+    start = time.perf_counter()
+    msg = await interaction.response.send_message("Pong!", ephemeral=True)
+    latency = round((time.perf_counter() - start) * 1000)
+    await interaction.edit_original_response(content=f"Pong! {latency}ms")
+    await log_action("Ping Command", interaction.user, interaction.channel, reason=f"Latency: {latency}ms")
 
 # ------------------------------
 # Mod Commands: lock/unlock/purge
@@ -122,6 +146,7 @@ async def lock(interaction: discord.Interaction, reason: str):
         return
     await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
     await interaction.response.send_message(f"Channel locked: {reason}", ephemeral=True)
+    await log_action("Locked Channel", interaction.user, interaction.channel, reason=reason)
 
 @bot.tree.command(name="unlock", description="Unlock the channel")
 @app_commands.describe(reason="Reason for unlocking")
@@ -131,6 +156,7 @@ async def unlock(interaction: discord.Interaction, reason: str):
         return
     await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
     await interaction.response.send_message(f"Channel unlocked: {reason}", ephemeral=True)
+    await log_action("Unlocked Channel", interaction.user, interaction.channel, reason=reason)
 
 @bot.tree.command(name="purge", description="Delete messages")
 @app_commands.describe(amount="Number of messages", reason="Reason for deletion")
@@ -143,6 +169,30 @@ async def purge(interaction: discord.Interaction, amount: int, reason: str):
         for msg in messages:
             f.write(f"{msg.author}: {msg.content}\n")
     await interaction.response.send_message(f"Purged {len(messages)} messages: {reason}", ephemeral=True)
+    await log_action("Purged Messages", interaction.user, interaction.channel, reason=reason)
+
+# ------------------------------
+# /add and /remove for ticket channels
+# ------------------------------
+@bot.tree.command(name="add", description="Add a user to a ticket channel")
+@app_commands.describe(user="User to add")
+async def add(interaction: discord.Interaction, user: discord.Member):
+    if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        await interaction.response.send_message("You cannot use this.", ephemeral=True)
+        return
+    await interaction.channel.set_permissions(user, view_channel=True, send_messages=True)
+    await interaction.response.send_message(f"{user.mention} added to the ticket.", ephemeral=True)
+    await log_action("Added User to Ticket", interaction.user, interaction.channel, reason=f"Added {user.mention}")
+
+@bot.tree.command(name="remove", description="Remove a user from a ticket channel")
+@app_commands.describe(user="User to remove")
+async def remove(interaction: discord.Interaction, user: discord.Member):
+    if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        await interaction.response.send_message("You cannot use this.", ephemeral=True)
+        return
+    await interaction.channel.set_permissions(user, view_channel=False)
+    await interaction.response.send_message(f"{user.mention} removed from the ticket.", ephemeral=True)
+    await log_action("Removed User from Ticket", interaction.user, interaction.channel, reason=f"Removed {user.mention}")
 
 # ------------------------------
 # Flask server for Render health checks
