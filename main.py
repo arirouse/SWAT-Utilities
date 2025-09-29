@@ -3,6 +3,7 @@ from discord import ui
 from discord.ext import commands
 import os
 import asyncio
+from io import StringIO
 
 # --- Environment Variables (Render) ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -12,7 +13,6 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 DESK_CATEGORY_ID = int(os.getenv("DESK_CATEGORY_ID"))
 IA_CATEGORY_ID = int(os.getenv("IA_CATEGORY_ID"))
 HR_CATEGORY_ID = int(os.getenv("HR_CATEGORY_ID"))
-GUILD_ID = int(os.getenv("GUILD_ID"))  # Optional: For faster guild-specific sync
 
 intents = discord.Intents.default()
 intents.members = True
@@ -128,12 +128,19 @@ class CloseButton(ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         ticket_channel = interaction.channel
-        messages = await ticket_channel.history(limit=None).flatten()
-        with open(f"logs/purged_messages_{ticket_channel.id}.txt", "w", encoding="utf-8") as f:
-            for msg in reversed(messages):
-                f.write(f"{msg.author}: {msg.content}\n")
-        await log_action("Ticket Closed", interaction.user, ticket_channel,
-                         f"Transcript saved: logs/purged_messages_{ticket_channel.id}.txt")
+        messages = await ticket_channel.history(limit=None, oldest_first=True).flatten()
+        transcript_buffer = StringIO()
+        for msg in messages:
+            transcript_buffer.write(f"{msg.author}: {msg.content}\n")
+        transcript_buffer.seek(0)
+        file_name = f"purged_messages_{ticket_channel.id}.txt"
+        file = discord.File(fp=transcript_buffer, filename=file_name)
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        embed = discord.Embed(
+            title="<:emoji_1:1401614346316021813> Ticket Closed",
+            description=f"Ticket {ticket_channel.name} closed by {interaction.user.mention}.\nTranscript attached."
+        )
+        await log_channel.send(embed=embed, file=file)
         await ticket_channel.delete()
 
 # --- /panel command ---
@@ -159,20 +166,29 @@ async def panel(interaction: discord.Interaction):
     )
     view = ui.View()
     view.add_item(TicketDropdown())
-    await interaction.response.send_message(embed=embed, view=view)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
 
-# --- Automatically sync commands on startup ---
-@bot.event
-async def on_ready():
-    try:
-        # Global sync
-        await bot.tree.sync()
-        # Optional: guild-specific sync for faster updates
-        await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        print(f"Slash commands synced for {bot.user}")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
-    print(f"Bot is ready. Logged in as {bot.user}")
+# --- /add command ---
+@bot.tree.command(name="add", description="Add a user to a ticket")
+async def add_user(interaction: discord.Interaction, member: discord.Member):
+    ticket_channel = interaction.channel
+    if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        await interaction.response.send_message("You cannot do this.", ephemeral=True)
+        return
+    await ticket_channel.set_permissions(member, view_channel=True, send_messages=True)
+    await interaction.response.send_message(f"{member.mention} has been added to the ticket.", ephemeral=True)
+    await log_action("User Added to Ticket", interaction.user, ticket_channel, f"Added {member.mention}")
+
+# --- /remove command ---
+@bot.tree.command(name="remove", description="Remove a user from a ticket")
+async def remove_user(interaction: discord.Interaction, member: discord.Member):
+    ticket_channel = interaction.channel
+    if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        await interaction.response.send_message("You cannot do this.", ephemeral=True)
+        return
+    await ticket_channel.set_permissions(member, overwrite=None)
+    await interaction.response.send_message(f"{member.mention} has been removed from the ticket.", ephemeral=True)
+    await log_action("User Removed from Ticket", interaction.user, ticket_channel, f"Removed {member.mention}")
 
 # --- Start bot ---
 bot.run(BOT_TOKEN)
