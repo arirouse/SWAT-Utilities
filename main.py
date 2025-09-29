@@ -12,6 +12,7 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 DESK_CATEGORY_ID = int(os.getenv("DESK_CATEGORY_ID"))
 IA_CATEGORY_ID = int(os.getenv("IA_CATEGORY_ID"))
 HR_CATEGORY_ID = int(os.getenv("HR_CATEGORY_ID"))
+GUILD_ID = int(os.getenv("GUILD_ID"))  # Optional: For faster guild-specific sync
 
 intents = discord.Intents.default()
 intents.members = True
@@ -48,8 +49,6 @@ class TicketDropdown(ui.Select):
         user = interaction.user
         category_id = DESK_CATEGORY_ID if self.values[0] == "Desk Support" else IA_CATEGORY_ID if self.values[0] == "IA" else HR_CATEGORY_ID
         category = interaction.guild.get_channel(category_id)
-
-        # Create ticket channel
         ticket_channel = await interaction.guild.create_text_channel(
             name=f"{self.values[0]}-{user.name}",
             category=category,
@@ -59,24 +58,18 @@ class TicketDropdown(ui.Select):
                 discord.Object(id=MOD_ROLE_ID): discord.PermissionOverwrite(view_channel=True, send_messages=True)
             }
         )
-
-        # Ping creator with ephemeral link
         await interaction.response.send_message(
             f"{user.mention}, your ticket has been created: {ticket_channel.mention}",
             ephemeral=True
         )
-
-        # Initial ticket embed with buttons
         embed = discord.Embed(
             title=f"<:emoji_1:1401614346316021813> {self.values[0]} Ticket",
-            description=f"Ticket opened by {user.mention}"
+            description=f"Ticket opened by {user.mention}\nClaimed by: None"
         )
         view = ui.View()
         view.add_item(ClaimButton())
         view.add_item(CloseButton())
         ticket_msg = await ticket_channel.send(embed=embed, view=view)
-
-        # Log creation
         await log_action("Ticket Created", user, ticket_channel, f"Type: {self.values[0]}")
 
 # --- Claim / Unclaim Buttons ---
@@ -87,30 +80,19 @@ class ClaimButton(ui.Button):
     async def callback(self, interaction: discord.Interaction):
         ticket_channel = interaction.channel
         ticket_msg = interaction.message
-
         if getattr(ticket_channel, "claimed_by", None):
             await interaction.response.send_message(
                 f"This ticket is already claimed by {ticket_channel.claimed_by.mention}.",
                 ephemeral=True
             )
             return
-
         ticket_channel.claimed_by = interaction.user
-
-        # Update embed
         embed = ticket_msg.embeds[0]
-        if len(embed.fields) == 0:
-            embed.add_field(name="Claimed by", value=interaction.user.mention, inline=False)
-        else:
-            embed.set_field_at(0, name="Claimed by", value=interaction.user.mention, inline=False)
-
-        # Toggle buttons: Unclaim + Close
+        embed.set_field_at(0, name="Claimed by", value=interaction.user.mention, inline=False)
         view = ui.View()
         view.add_item(UnclaimButton())
         view.add_item(CloseButton())
         await ticket_msg.edit(embed=embed, view=view)
-
-        # Confirmation embed
         confirm_embed = discord.Embed(
             title="<:emoji_1:1401614346316021813> Ticket Claimed",
             description=f"{interaction.user.mention} has claimed this ticket."
@@ -125,18 +107,15 @@ class UnclaimButton(ui.Button):
     async def callback(self, interaction: discord.Interaction):
         ticket_channel = interaction.channel
         ticket_msg = interaction.message
-
         if getattr(ticket_channel, "claimed_by", None) != interaction.user:
             await interaction.response.send_message(
                 "You cannot unclaim this ticket (not the claimer).",
                 ephemeral=True
             )
             return
-
         ticket_channel.claimed_by = None
         embed = ticket_msg.embeds[0]
         embed.set_field_at(0, name="Claimed by", value="None", inline=False)
-
         view = ui.View()
         view.add_item(ClaimButton())
         view.add_item(CloseButton())
@@ -149,27 +128,20 @@ class CloseButton(ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         ticket_channel = interaction.channel
-
-        # Save transcript
         messages = await ticket_channel.history(limit=None).flatten()
         with open(f"logs/purged_messages_{ticket_channel.id}.txt", "w", encoding="utf-8") as f:
             for msg in reversed(messages):
                 f.write(f"{msg.author}: {msg.content}\n")
-
-        # Log closure + transcript
         await log_action("Ticket Closed", interaction.user, ticket_channel,
                          f"Transcript saved: logs/purged_messages_{ticket_channel.id}.txt")
-
         await ticket_channel.delete()
 
 # --- /panel command ---
-@bot.tree.command(name="panel", description="Posts the ticket panel (MOD only)")
+@bot.tree.command(name="panel", description="Posts the ticket panel (MOD only, visible to everyone)")
 async def panel(interaction: discord.Interaction):
     if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
         await interaction.response.send_message("You cannot use this.", ephemeral=True)
         return
-
-    # Show to everyone but keep command sender hidden
     embed = discord.Embed(
         title="<:emoji_1:1401614346316021813> Open a Ticket",
         description="""\
@@ -187,31 +159,20 @@ async def panel(interaction: discord.Interaction):
     )
     view = ui.View()
     view.add_item(TicketDropdown())
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
+    await interaction.response.send_message(embed=embed, view=view)
 
-# --- /add command ---
-@bot.tree.command(name="add", description="Add a user to the ticket (MOD only)")
-@discord.app_commands.describe(user="User to add to the ticket")
-async def add(interaction: discord.Interaction, user: discord.Member):
-    if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
-        await interaction.response.send_message("You cannot use this.", ephemeral=True)
-        return
-    channel = interaction.channel
-    await channel.set_permissions(user, view_channel=True, send_messages=True)
-    await interaction.response.send_message(f"{user.mention} has been added to this ticket.", ephemeral=True)
-    await log_action("User Added to Ticket", interaction.user, channel, f"Added {user.mention}")
-
-# --- /remove command ---
-@bot.tree.command(name="remove", description="Remove a user from the ticket (MOD only)")
-@discord.app_commands.describe(user="User to remove from the ticket")
-async def remove(interaction: discord.Interaction, user: discord.Member):
-    if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
-        await interaction.response.send_message("You cannot use this.", ephemeral=True)
-        return
-    channel = interaction.channel
-    await channel.set_permissions(user, overwrite=None)
-    await interaction.response.send_message(f"{user.mention} has been removed from this ticket.", ephemeral=True)
-    await log_action("User Removed from Ticket", interaction.user, channel, f"Removed {user.mention}")
+# --- Automatically sync commands on startup ---
+@bot.event
+async def on_ready():
+    try:
+        # Global sync
+        await bot.tree.sync()
+        # Optional: guild-specific sync for faster updates
+        await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"Slash commands synced for {bot.user}")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
+    print(f"Bot is ready. Logged in as {bot.user}")
 
 # --- Start bot ---
 bot.run(BOT_TOKEN)
