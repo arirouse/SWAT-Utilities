@@ -227,6 +227,12 @@ class TicketDropdown(ui.Select):
     async def callback(self, interaction: discord.Interaction):
         await TicketDropdown().callback(interaction)
 
+# --- Ping ---
+@bot.tree.command(name="ping", description="Check if bot is online")
+async def ping(interaction: discord.Interaction):
+    latency = round(bot.latency * 1000)  # milliseconds
+    await interaction.response.send_message(f"Pong! {latency}ms", ephemeral=True)
+
 
 # --- Start the bot ---
 bot.run(BOT_TOKEN)
