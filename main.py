@@ -106,7 +106,21 @@ async def panel(interaction: discord.Interaction):
     if MOD_ROLE_ID not in [role.id for role in interaction.user.roles]:
         await interaction.response.send_message("You cannot use this.", ephemeral=True)
         return
-    embed = discord.Embed(title=":ticket: Open a Ticket", description="Select your ticket type below.")
+    embed = discord.Embed(
+    title=":ticket: Open a Ticket",
+    description="""\
+:icon3: Guidelines
+:icon9: Tickets are designed for serious support matters only. Always select the correct category and clearly explain your issue so staff can assist quickly. Misuse of the ticket system, such as trolling or opening tickets without reason, may lead to warnings, ticket closures, or disciplinary action.
+
+:icon5: Desk Support
+:icon9: Inquiries, questions. Typically faster responses and age verification.
+
+:icon4: Internal Affairs
+:icon9: Handling Officer reports, cases. This requires department lawyers.
+
+:icon6: HR+ Support
+:icon9: Speaking to Director/SHR+, told by HR to open and etc."""
+)
     view = ui.View()
     view.add_item(TicketDropdown())
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
