@@ -1,11 +1,16 @@
 import discord
 from discord import ui
 from discord.ext import commands
+import os
 
-# Variables you need to define in Render
-# BOT_TOKEN, MOD_ROLE_ID, SAY_ROLE_ID, LOG_CHANNEL_ID
-# DESK_CATEGORY_ID, IA_CATEGORY_ID, HR_CATEGORY_ID
-# PORT
+# --- Environment Variables (Render) ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+MOD_ROLE_ID = int(os.getenv("MOD_ROLE_ID"))
+SAY_ROLE_ID = int(os.getenv("SAY_ROLE_ID"))
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+DESK_CATEGORY_ID = int(os.getenv("DESK_CATEGORY_ID"))
+IA_CATEGORY_ID = int(os.getenv("IA_CATEGORY_ID"))
+HR_CATEGORY_ID = int(os.getenv("HR_CATEGORY_ID"))
 
 intents = discord.Intents.default()
 intents.members = True
