@@ -78,21 +78,33 @@ class ClaimButton(ui.Button):
         super().__init__(style=discord.ButtonStyle.green, label="Claim")
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()  # ✅ prevents "interaction failed"
         ticket_channel = interaction.channel
         ticket_msg = interaction.message
+
         if getattr(ticket_channel, "claimed_by", None):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"This ticket is already claimed by {ticket_channel.claimed_by.mention}.",
                 ephemeral=True
             )
             return
+
         ticket_channel.claimed_by = interaction.user
+
+        # Update embed with claimer
         embed = ticket_msg.embeds[0]
-        embed.set_field_at(0, name="Claimed by", value=interaction.user.mention, inline=False)
+        if len(embed.fields) == 0:
+            embed.add_field(name="Claimed by", value=interaction.user.mention, inline=False)
+        else:
+            embed.set_field_at(0, name="Claimed by", value=interaction.user.mention, inline=False)
+
+        # Toggle buttons: Unclaim + Close
         view = ui.View()
         view.add_item(UnclaimButton())
         view.add_item(CloseButton())
         await ticket_msg.edit(embed=embed, view=view)
+
+        # Confirmation embed
         confirm_embed = discord.Embed(
             title="<:emoji_1:1401614346316021813> Ticket Claimed",
             description=f"{interaction.user.mention} has claimed this ticket."
@@ -100,47 +112,52 @@ class ClaimButton(ui.Button):
         await ticket_channel.send(embed=confirm_embed)
         await log_action("Ticket Claimed", interaction.user, ticket_channel)
 
+
 class UnclaimButton(ui.Button):
     def __init__(self):
         super().__init__(style=discord.ButtonStyle.grey, label="Unclaim")
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()  # ✅ prevents "interaction failed"
         ticket_channel = interaction.channel
         ticket_msg = interaction.message
+
         if getattr(ticket_channel, "claimed_by", None) != interaction.user:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "You cannot unclaim this ticket (not the claimer).",
                 ephemeral=True
             )
             return
+
         ticket_channel.claimed_by = None
         embed = ticket_msg.embeds[0]
         embed.set_field_at(0, name="Claimed by", value="None", inline=False)
+
+        # Toggle buttons: Claim + Close
         view = ui.View()
         view.add_item(ClaimButton())
         view.add_item(CloseButton())
         await ticket_msg.edit(embed=embed, view=view)
+
         await log_action("Ticket Unclaimed", interaction.user, ticket_channel)
+
 
 class CloseButton(ui.Button):
     def __init__(self):
         super().__init__(style=discord.ButtonStyle.red, label="Close")
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()  # ✅ prevents "interaction failed"
         ticket_channel = interaction.channel
-        messages = await ticket_channel.history(limit=None, oldest_first=True).flatten()
-        transcript_buffer = StringIO()
-        for msg in messages:
-            transcript_buffer.write(f"{msg.author}: {msg.content}\n")
-        transcript_buffer.seek(0)
-        file_name = f"purged_messages_{ticket_channel.id}.txt"
-        file = discord.File(fp=transcript_buffer, filename=file_name)
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        embed = discord.Embed(
-            title="<:emoji_1:1401614346316021813> Ticket Closed",
-            description=f"Ticket {ticket_channel.name} closed by {interaction.user.mention}.\nTranscript attached."
-        )
-        await log_channel.send(embed=embed, file=file)
+        ticket_msg = interaction.message
+
+        # Save transcript in memory (or log channel)
+        messages = await ticket_channel.history(limit=None).flatten()
+        transcript_text = "\n".join(f"{msg.author}: {msg.content}" for msg in reversed(messages))
+
+        # Log closure + transcript
+        await log_action("Ticket Closed", interaction.user, ticket_channel, f"Transcript:\n{transcript_text}")
+
         await ticket_channel.delete()
 
 # --- /panel command ---
