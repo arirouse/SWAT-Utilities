@@ -679,7 +679,7 @@ async def on_ready():
     )
 
     # --- SYNC SLASH COMMANDS TO YOUR GUILD ---
-    guild = discord.Object(id=GUILD_ID)  # GUILD_ID is loaded from environment
+    guild = discord.Object(id=1401131346658725979)  # GUILD_ID is loaded from environment
     await bot.tree.sync(guild=guild)
 
     print("✅ Slash commands synced to guild!")
