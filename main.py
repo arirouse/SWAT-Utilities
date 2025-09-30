@@ -722,20 +722,35 @@ def home():
 # Start Flask server in a background thread
 threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
+# --- ON_READY EVENT (combined) ---
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
+    # Set nickname
+    guild = bot.get_guild(int(GUILD_ID))
+    me = guild.get_member(bot.user.id)
+    await me.edit(nick="Created by RE3")
+    print(f"Bot is ready! Nickname set to 'Created by RE3'")
 
-    # Set bot activity (shows as "Watching Created by RE3")
+    # Set bot presence/activity
     await bot.change_presence(
         activity=discord.Activity(type=discord.ActivityType.watching, name="Created by RE3")
     )
 
-    # --- SYNC SLASH COMMANDS TO YOUR GUILD ---
-    guild = discord.Object(id=1401131346658725979)  # GUILD_ID is loaded from environment
-    await bot.tree.sync(guild=guild)
-
+    # Optionally sync slash commands if needed
+    guild_obj = discord.Object(id=int(GUILD_ID))
+    await bot.tree.sync(guild=guild_obj)
     print("✅ Slash commands synced to guild!")
+
+    # Sync slash commands to a specific guild
+    try:
+        guild = discord.Object(id=int(1401131346658725979))  # Load your guild ID from environment
+        await bot.tree.sync(guild=guild)
+        print("✅ Slash commands synced to guild!")
+    except Exception as e:
+        print(f"❌ Failed to sync slash commands: {e}")
+
+    # Optional: print a ready message
+    print(f"Bot is online as {bot.user} (ID: {bot.user.id})")
 
 # Run bot
 if __name__ == "__main__":
