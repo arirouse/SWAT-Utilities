@@ -140,80 +140,79 @@ class TicketButtonsView(discord.ui.View):
     def __init__(self, *, timeout=None):
         super().__init__(timeout=timeout)
 
-    # Claim button
-    @discord.ui.button(label="Claim", style=discord.ButtonStyle.green, custom_id="ticket_claim_button")
-    async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+  from discord import ui, Embed, ButtonStyle, Interaction
+from datetime import datetime
+
+class TicketButtons(ui.View):
+   
+    
+    # --- Claim Button ---
+    @ui.button(label="Claim", style=ButtonStyle.green, custom_id="ticket_claim_button")
+    async def claim_button(self, interaction: Interaction, button: ui.Button):
         await interaction.response.defer(ephemeral=True)
         channel = interaction.channel
         meta = _read_topic_meta(channel.topic)
-        # claimed_by stores a user id or None
-        claimed_by = meta.get("claimed_by")
-        if claimed_by:
-            # already claimed
+
+        # Check if already claimed
+        if meta.get("claimed_by"):
             await interaction.followup.send("This ticket is already claimed.", ephemeral=True)
             return
 
-        # Only allow members with MOD_ROLE_ID to claim (moderator action)
+        # Only moderators can claim
         if not any(r.id == MOD_ROLE_ID for r in interaction.user.roles):
             await interaction.followup.send("You do not have permission to claim tickets.", ephemeral=True)
             return
 
-        # set claimed_by and update topic
+        # Update meta
         meta["claimed_by"] = interaction.user.id
         meta["claimed_by_name"] = interaction.user.display_name
-        # update topic
         await channel.edit(topic=_write_topic_meta(meta))
-        # Edit the ticket embed (first embed in the original message) to update Claimed by field.
+
+        # Update the ticket embed
         try:
-            # Find the original ticket message (we store it in meta)
             msg_id = meta.get("ticket_message_id")
             if msg_id:
                 msg = await channel.fetch_message(int(msg_id))
-                # edit embed
                 if msg.embeds:
-                    embed = msg.embeds[0]
-                    # Replace or add Claimed by field (we'll try to find field index)
-                    fields = list(embed.fields)
-                    found = False
-                    for i, f in enumerate(fields):
-                        if f.name == "Claimed by":
-                            fields[i] = discord.EmbedProxy(embed).set_field_at  # dummy to satisfy typing
-                    # Simpler: rebuild embed with expected layout
-                    new_embed = discord.Embed(title=embed.title, color=EMBED_COLOR, timestamp=embed.timestamp)
-                    # Description should include opener and Claimed by header line preserved
-                    # We'll parse opener line if present
-                    desc = embed.description or ""
-                    # Recreate description exactly as spec: Ticket opened by {user.mention}\nClaimed by: {value}
-                    opener_line = None
-                    if desc.splitlines():
-                        opener_line = desc.splitlines()[0]
+                    old_embed = msg.embeds[0]
+                    opener_line = (old_embed.description.splitlines()[0] if old_embed.description else "")
                     claimed_val = f"<@{interaction.user.id}>"
-                    new_embed.description = f"{opener_line}\nClaimed by: {claimed_val}"
-                    # Add fields: Claimed by, People added, Open date, Ticket ID, Ticket Open Timestamp
-                    new_embed.add_field(name="Claimed by", value=claimed_val, inline=False)
+
+                    new_embed = Embed(
+                        title=old_embed.title,
+                        description=f"{opener_line}\nClaimed by: {claimed_val}",
+                        color=EMBED_COLOR,
+                        timestamp=old_embed.timestamp
+                    )
+
                     people_added = meta.get("added", [])
-                    new_embed.add_field(name="People added", value=", ".join(f"<@{i}>" for i in people_added) if people_added else "None", inline=False)
+                    new_embed.add_field(name="Claimed by", value=claimed_val, inline=False)
+                    new_embed.add_field(name="People added", value=", ".join(f"<@{u}>" for u in people_added) if people_added else "None", inline=False)
                     new_embed.add_field(name="Open date", value=meta.get("opened_at", "Unknown"), inline=True)
                     new_embed.add_field(name="Ticket ID", value=meta.get("ticket_id", "Unknown"), inline=True)
+
                     await msg.edit(embed=new_embed, view=TicketButtonsViewClaimed())
         except Exception as e:
             print("Error updating ticket embed on claim:", e)
 
-        # Replace the message view to Unclaim + Close (we've already edited the embed)
-        # Post claim confirmation embed to ticket channel (visible to all)
-        confirm_embed = discord.Embed(title=f"{LOGO_EMOJI} Ticket Claimed", description=f"{interaction.user.mention} has claimed this ticket.", color=EMBED_COLOR, timestamp=datetime.utcnow())
+        # Confirmation and logging
+        confirm_embed = Embed(
+            title=f"{LOGO_EMOJI} Ticket Claimed",
+            description=f"{interaction.user.mention} has claimed this ticket.",
+            color=EMBED_COLOR,
+            timestamp=datetime.utcnow()
+        )
         await channel.send(embed=confirm_embed)
-        # Log the claim (no ping in logs)
         await log_action("Ticket Claimed", interaction.user, channel, details=f"Type: {meta.get('type')}")
-
         await interaction.followup.send("Ticket claimed successfully.", ephemeral=True)
 
-    # Unclaim button (only visible after claiming; grey)
-    @discord.ui.button(label="Unclaim", style=discord.ButtonStyle.grey, custom_id="ticket_unclaim_button")
-    async def unclaim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    # --- Unclaim Button ---
+    @ui.button(label="Unclaim", style=ButtonStyle.grey, custom_id="ticket_unclaim_button")
+    async def unclaim_button(self, interaction: Interaction, button: ui.Button):
         await interaction.response.defer(ephemeral=True)
         channel = interaction.channel
         meta = _read_topic_meta(channel.topic)
+
         claimed_by = meta.get("claimed_by")
         if not claimed_by:
             await interaction.followup.send("Ticket is not claimed.", ephemeral=True)
@@ -221,25 +220,34 @@ class TicketButtonsView(discord.ui.View):
         if int(claimed_by) != interaction.user.id:
             await interaction.followup.send("You cannot unclaim this ticket (not the claimer).", ephemeral=True)
             return
-        # perform unclaim
+
+        # Update meta
         meta["claimed_by"] = None
         meta["claimed_by_name"] = None
         await channel.edit(topic=_write_topic_meta(meta))
+
         # Update embed back to unclaimed state
         try:
             msg_id = meta.get("ticket_message_id")
             if msg_id:
                 msg = await channel.fetch_message(int(msg_id))
                 if msg.embeds:
-                    embed = msg.embeds[0]
-                    opener_line = (embed.description.splitlines()[0] if embed.description else "")
-                    new_embed = discord.Embed(title=embed.title, color=EMBED_COLOR, timestamp=embed.timestamp)
-                    new_embed.description = f"{opener_line}\nClaimed by: None"
-                    new_embed.add_field(name="Claimed by", value="None", inline=False)
+                    old_embed = msg.embeds[0]
+                    opener_line = (old_embed.description.splitlines()[0] if old_embed.description else "")
+
+                    new_embed = Embed(
+                        title=old_embed.title,
+                        description=f"{opener_line}\nClaimed by: None",
+                        color=EMBED_COLOR,
+                        timestamp=old_embed.timestamp
+                    )
+
                     people_added = meta.get("added", [])
-                    new_embed.add_field(name="People added", value=", ".join(f"<@{i}>" for i in people_added) if people_added else "None", inline=False)
+                    new_embed.add_field(name="Claimed by", value="None", inline=False)
+                    new_embed.add_field(name="People added", value=", ".join(f"<@{u}>" for u in people_added) if people_added else "None", inline=False)
                     new_embed.add_field(name="Open date", value=meta.get("opened_at", "Unknown"), inline=True)
                     new_embed.add_field(name="Ticket ID", value=meta.get("ticket_id", "Unknown"), inline=True)
+
                     await msg.edit(embed=new_embed, view=TicketButtonsView())
         except Exception as e:
             print("Error updating ticket embed on unclaim:", e)
@@ -247,13 +255,14 @@ class TicketButtonsView(discord.ui.View):
         await log_action("Ticket Unclaimed", interaction.user, channel, details=f"Type: {meta.get('type')}")
         await interaction.followup.send("Ticket unclaimed.", ephemeral=True)
 
-    # Close button (red)
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.red, custom_id="ticket_close_button")
-    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()  # not ephemeral because deletion will happen
-        channel: discord.TextChannel = interaction.channel
+    # --- Close Button ---
+    @ui.button(label="Close", style=ButtonStyle.red, custom_id="ticket_close_button")
+    async def close_button(self, interaction: Interaction, button: ui.Button):
+        await interaction.response.defer()  # visible to all
+        channel = interaction.channel
         meta = _read_topic_meta(channel.topic)
-        # Only moderators can close (enforce)
+
+        # Only moderators
         if not any(r.id == MOD_ROLE_ID for r in interaction.user.roles):
             try:
                 await interaction.followup.send("You do not have permission to close tickets.", ephemeral=True)
