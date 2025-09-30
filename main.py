@@ -583,79 +583,78 @@ from datetime import datetime, timezone, timedelta
 # MOD-ONLY SLASH COMMANDS (ROLE-LOCKED)
 # ======================
 
+import datetime
+
+# --- Helper function to log mod actions ---
+async def log_mod_action(interaction: discord.Interaction, title: str, description: str):
+    log_channel = interaction.guild.get_channel(int(LOG_CHANNEL_ID))
+    if log_channel:
+        embed = discord.Embed(
+            title=f"🔧 {title}",
+            description=description,
+            color=discord.Color.dark_red(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text=f"By {interaction.user.display_name}")
+        await log_channel.send(embed=embed)
+
+# --- /kick ---
 @bot.tree.command(name="kick", description="Kick a member (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 @app_commands.describe(member="The member to kick", reason="Reason for the kick")
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str):
     await member.kick(reason=reason)
-    embed = discord.Embed(
-        title="👢 Member Kicked",
-        description=f"{member.mention} was kicked.\nReason: {reason}",
-        color=discord.Color.red(),
-        timestamp=datetime.now(timezone.utc)
-    )
+    description = f"{member.mention} was kicked.\nReason: {reason}"
+    embed = discord.Embed(title="👢 Member Kicked", description=description, color=discord.Color.red(), timestamp=datetime.datetime.utcnow())
     await interaction.response.send_message(embed=embed)
+    await log_mod_action(interaction, "Kick", description)
 
-
+# --- /ban ---
 @bot.tree.command(name="ban", description="Ban a member (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 @app_commands.describe(member="The member to ban", reason="Reason for the ban")
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str):
     await member.ban(reason=reason)
-    embed = discord.Embed(
-        title="🔨 Member Banned",
-        description=f"{member.mention} was banned.\nReason: {reason}",
-        color=discord.Color.red(),
-        timestamp=datetime.now(timezone.utc)
-    )
+    description = f"{member.mention} was banned.\nReason: {reason}"
+    embed = discord.Embed(title="🔨 Member Banned", description=description, color=discord.Color.red(), timestamp=datetime.datetime.utcnow())
     await interaction.response.send_message(embed=embed)
+    await log_mod_action(interaction, "Ban", description)
 
-
+# --- /timeout ---
 @bot.tree.command(name="timeout", description="Timeout a member (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 @app_commands.describe(member="The member to timeout", duration="Duration in minutes", reason="Reason for the timeout")
 async def timeout(interaction: discord.Interaction, member: discord.Member, duration: int, reason: str):
-    until = datetime.now(timezone.utc) + timedelta(minutes=duration)
+    until = datetime.datetime.utcnow() + datetime.timedelta(minutes=duration)
     await member.timeout(until=until, reason=reason)
-    embed = discord.Embed(
-        title="⏳ Member Timed Out",
-        description=f"{member.mention} timed out for {duration} minutes.\nReason: {reason}",
-        color=discord.Color.orange(),
-        timestamp=datetime.now(timezone.utc)
-    )
+    description = f"{member.mention} timed out for {duration} minutes.\nReason: {reason}"
+    embed = discord.Embed(title="⏳ Member Timed Out", description=description, color=discord.Color.orange(), timestamp=datetime.datetime.utcnow())
     await interaction.response.send_message(embed=embed)
+    await log_mod_action(interaction, "Timeout", description)
 
-
+# --- /lock ---
 @bot.tree.command(name="lock", description="Lock the current channel (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 async def lock(interaction: discord.Interaction):
     overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
     overwrite.send_messages = False
     await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
-
-    embed = discord.Embed(
-        title="🔒 Channel Locked",
-        description=f"{interaction.channel.mention} has been locked.",
-        color=discord.Color.dark_gray(),
-        timestamp=datetime.now(timezone.utc)
-    )
+    description = f"{interaction.channel.mention} has been locked."
+    embed = discord.Embed(title="🔒 Channel Locked", description=description, color=discord.Color.dark_gray(), timestamp=datetime.datetime.utcnow())
     await interaction.response.send_message(embed=embed)
+    await log_mod_action(interaction, "Lock", description)
 
-
+# --- /unlock ---
 @bot.tree.command(name="unlock", description="Unlock the current channel (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 async def unlock(interaction: discord.Interaction):
     overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
     overwrite.send_messages = True
     await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
-
-    embed = discord.Embed(
-        title="🔓 Channel Unlocked",
-        description=f"{interaction.channel.mention} has been unlocked.",
-        color=discord.Color.green(),
-        timestamp=datetime.now(timezone.utc)
-    )
+    description = f"{interaction.channel.mention} has been unlocked."
+    embed = discord.Embed(title="🔓 Channel Unlocked", description=description, color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
     await interaction.response.send_message(embed=embed)
+    await log_mod_action(interaction, "Unlock", description)
 
 # --- /purge ---
 @bot.tree.command(name="purge", description="Delete messages in bulk.")
