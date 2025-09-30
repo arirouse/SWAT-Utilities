@@ -732,14 +732,7 @@ def home():
 threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
 # --- ON_READY EVENT (combined) ---
-@bot.event
-async def on_ready():
-    # Set nickname
-    guild = bot.get_guild(int(GUILD_ID))
-    if guild:
-        me = guild.get_member(bot.user.id)
-        if me:
-            await me.edit(nick="Created by RE3")
+
 
     # Add persistent views
     bot.add_view(TicketButtonsView(timeout=None))
