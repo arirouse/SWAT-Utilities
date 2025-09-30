@@ -577,75 +577,129 @@ async def log_action(interaction: discord.Interaction, action: str):
         embed.set_footer(text=f"By {interaction.user.display_name}")
         await log_channel.send(embed=embed)
 
-# --- /kick ---
-@bot.tree.command(name="kick", description="Kick a member from the server.")
+from datetime import datetime, timezone, timedelta
+
+# ======================
+# MOD-ONLY SLASH COMMANDS (ROLE-LOCKED)
+# ======================
+
+@bot.tree.command(name="kick", description="Kick a member (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
+@app_commands.describe(member="The member to kick", reason="Reason for the kick")
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str):
     await member.kick(reason=reason)
-    await interaction.response.send_message(f"{member} has been kicked. Reason: {reason}", ephemeral=True)
-    await log_action(interaction, f"**Kicked:** {member}\n**Reason:** {reason}")
+    embed = discord.Embed(
+        title="👢 Member Kicked",
+        description=f"{member.mention} was kicked.\nReason: {reason}",
+        color=discord.Color.red(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await interaction.response.send_message(embed=embed)
 
-# --- /ban ---
-@bot.tree.command(name="ban", description="Ban a member from the server.")
+
+@bot.tree.command(name="ban", description="Ban a member (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
+@app_commands.describe(member="The member to ban", reason="Reason for the ban")
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str):
     await member.ban(reason=reason)
-    await interaction.response.send_message(f"{member} has been banned. Reason: {reason}", ephemeral=True)
-    await log_action(interaction, f"**Banned:** {member}\n**Reason:** {reason}")
+    embed = discord.Embed(
+        title="🔨 Member Banned",
+        description=f"{member.mention} was banned.\nReason: {reason}",
+        color=discord.Color.red(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await interaction.response.send_message(embed=embed)
 
-# --- /timeout ---
-@bot.tree.command(name="timeout", description="Timeout a member.")
+
+@bot.tree.command(name="timeout", description="Timeout a member (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
-async def timeout(interaction: discord.Interaction, member: discord.Member, duration: str, reason: str):
-    # Parse duration like "10m", "1h", "7d"
-    units = {"m":60, "h":3600, "d":86400}
-    seconds = int(duration[:-1]) * units.get(duration[-1], 60)
-    until = discord.utils.utcnow() + datetime.timedelta(seconds=seconds)
-    await member.timeout(until, reason=reason)
-    await interaction.response.send_message(f"{member} has been timed out for {duration}. Reason: {reason}", ephemeral=True)
-    await log_action(interaction, f"**Timeout:** {member}\n**Duration:** {duration}\n**Reason:** {reason}")
+@app_commands.describe(member="The member to timeout", duration="Duration in minutes", reason="Reason for the timeout")
+async def timeout(interaction: discord.Interaction, member: discord.Member, duration: int, reason: str):
+    until = datetime.now(timezone.utc) + timedelta(minutes=duration)
+    await member.timeout(until=until, reason=reason)
+    embed = discord.Embed(
+        title="⏳ Member Timed Out",
+        description=f"{member.mention} timed out for {duration} minutes.\nReason: {reason}",
+        color=discord.Color.orange(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await interaction.response.send_message(embed=embed)
 
-# --- /lock ---
-@bot.tree.command(name="lock", description="Lock the current channel.")
+
+@bot.tree.command(name="lock", description="Lock the current channel (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 async def lock(interaction: discord.Interaction):
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
-    await interaction.response.send_message("Channel locked.", ephemeral=True)
-    await log_action(interaction, f"**Locked Channel:** {interaction.channel.mention}")
+    overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = False
+    await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
 
-# --- /unlock ---
-@bot.tree.command(name="unlock", description="Unlock the current channel.")
+    embed = discord.Embed(
+        title="🔒 Channel Locked",
+        description=f"{interaction.channel.mention} has been locked.",
+        color=discord.Color.dark_gray(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="unlock", description="Unlock the current channel (Mod only)")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 async def unlock(interaction: discord.Interaction):
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
-    await interaction.response.send_message("Channel unlocked.", ephemeral=True)
-    await log_action(interaction, f"**Unlocked Channel:** {interaction.channel.mention}")
+    overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = True
+    await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
+
+    embed = discord.Embed(
+        title="🔓 Channel Unlocked",
+        description=f"{interaction.channel.mention} has been unlocked.",
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    await interaction.response.send_message(embed=embed)
 
 # --- /purge ---
 @bot.tree.command(name="purge", description="Delete messages in bulk.")
 @app_commands.checks.has_role(int(MOD_ROLE_ID))
 async def purge(interaction: discord.Interaction, amount: int, reason: str):
+    import io
+    import datetime
+
     if amount < 1 or amount > 100:
         await interaction.response.send_message("Amount must be between 1 and 100.", ephemeral=True)
         return
 
-    messages = await interaction.channel.history(limit=amount).flatten()
-    transcript_text = "\n".join([f"[{m.created_at}] {m.author}: {m.content}" for m in messages])
+    # Defer the response (acknowledge)
+    await interaction.response.defer(ephemeral=True)
 
-    # Write to a .txt file
-    transcript_file = discord.File(io.BytesIO(transcript_text.encode()), filename="purge_log.txt")
+    # Fetch messages
+    messages = await interaction.channel.history(limit=amount, oldest_first=False).flatten()
+
+    # Create transcript text with proper UTC time format
+    transcript_text = "\n".join([
+        f"{m.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')} | {m.author} ({m.author.id}): {m.content}"
+        for m in reversed(messages)  # chronological order
+    ])
+
+    # Prepare .txt file
+    transcript_file = discord.File(io.BytesIO(transcript_text.encode()), filename=f"purge_log_{interaction.channel.id}.txt")
 
     # Delete messages
     await interaction.channel.purge(limit=amount)
-    await interaction.response.send_message(f"Purged {amount} messages. Reason: {reason}", ephemeral=True)
 
-    # Log action + file
+    # Send ephemeral confirmation
+    await interaction.followup.send(f"Purged {amount} messages. Reason: {reason}", ephemeral=True)
+
+    # Log to the log channel
     log_channel = interaction.guild.get_channel(int(LOG_CHANNEL_ID))
     if log_channel:
-        await log_channel.send(
-            content=f"**Purge in {interaction.channel.mention} by {interaction.user}**\nReason: {reason}",
-            file=transcript_file
+        embed = discord.Embed(
+            title="🔧 Moderation Action: Purge",
+            description=f"Channel: {interaction.channel.mention}\nModerator: {interaction.user.mention}\nReason: {reason}",
+            color=discord.Color.dark_red(),
+            timestamp=datetime.datetime.utcnow()
         )
+        embed.set_footer(text="Ticket System / Mod Action")
+        await log_channel.send(embed=embed, file=transcript_file)
 
 # --- /say ---
 @bot.tree.command(name="say", description="Make the bot say something as an embed.")
