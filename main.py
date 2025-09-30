@@ -654,6 +654,19 @@ async def say(interaction: discord.Interaction, text: str):
     await interaction.response.send_message("Message sent.", ephemeral=True)
     await log_action(interaction, f"**Say command used by {interaction.user}**\nContent: {text}")
 
+# --- Flask keep-alive for UptimeRobot ---
+from flask import Flask
+import threading
+
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is alive!"
+
+# Start Flask server in a background thread
+threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
+
 # Run bot
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
