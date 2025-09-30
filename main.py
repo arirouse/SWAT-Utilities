@@ -20,6 +20,8 @@ import os
 import re
 import json
 import asyncio
+import os
+GUILD_ID = int(os.getenv("GUILD_ID"))  # The server ID where you want commands to update immediately
 from io import StringIO
 from datetime import datetime, timezone
 
