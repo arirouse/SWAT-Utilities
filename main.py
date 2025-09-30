@@ -553,6 +553,107 @@ async def remove(interaction: discord.Interaction, member: discord.Member):
     await channel.send(embed=confirm_embed)
     await log_action("User Removed from Ticket", interaction.user, channel, details=f"Removed {member.mention}")
 
+# ================================
+# MODERATION COMMANDS
+# Place this AFTER your /setup command in main.py
+# ================================
+
+from discord import app_commands
+import io
+import datetime
+
+# Utility to log mod actions
+async def log_action(interaction: discord.Interaction, action: str):
+    log_channel = interaction.guild.get_channel(int(LOG_CHANNEL_ID))
+    if log_channel:
+        embed = discord.Embed(
+            title="🔧 Moderation Action",
+            description=action,
+            color=discord.Color.dark_red(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.set_footer(text=f"By {interaction.user.display_name}")
+        await log_channel.send(embed=embed)
+
+# --- /kick ---
+@bot.tree.command(name="kick", description="Kick a member from the server.")
+@app_commands.checks.has_role(int(MOD_ROLE_ID))
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str):
+    await member.kick(reason=reason)
+    await interaction.response.send_message(f"{member} has been kicked. Reason: {reason}", ephemeral=True)
+    await log_action(interaction, f"**Kicked:** {member}\n**Reason:** {reason}")
+
+# --- /ban ---
+@bot.tree.command(name="ban", description="Ban a member from the server.")
+@app_commands.checks.has_role(int(MOD_ROLE_ID))
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str):
+    await member.ban(reason=reason)
+    await interaction.response.send_message(f"{member} has been banned. Reason: {reason}", ephemeral=True)
+    await log_action(interaction, f"**Banned:** {member}\n**Reason:** {reason}")
+
+# --- /timeout ---
+@bot.tree.command(name="timeout", description="Timeout a member.")
+@app_commands.checks.has_role(int(MOD_ROLE_ID))
+async def timeout(interaction: discord.Interaction, member: discord.Member, duration: str, reason: str):
+    # Parse duration like "10m", "1h", "7d"
+    units = {"m":60, "h":3600, "d":86400}
+    seconds = int(duration[:-1]) * units.get(duration[-1], 60)
+    until = discord.utils.utcnow() + datetime.timedelta(seconds=seconds)
+    await member.timeout(until, reason=reason)
+    await interaction.response.send_message(f"{member} has been timed out for {duration}. Reason: {reason}", ephemeral=True)
+    await log_action(interaction, f"**Timeout:** {member}\n**Duration:** {duration}\n**Reason:** {reason}")
+
+# --- /lock ---
+@bot.tree.command(name="lock", description="Lock the current channel.")
+@app_commands.checks.has_role(int(MOD_ROLE_ID))
+async def lock(interaction: discord.Interaction):
+    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
+    await interaction.response.send_message("Channel locked.", ephemeral=True)
+    await log_action(interaction, f"**Locked Channel:** {interaction.channel.mention}")
+
+# --- /unlock ---
+@bot.tree.command(name="unlock", description="Unlock the current channel.")
+@app_commands.checks.has_role(int(MOD_ROLE_ID))
+async def unlock(interaction: discord.Interaction):
+    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
+    await interaction.response.send_message("Channel unlocked.", ephemeral=True)
+    await log_action(interaction, f"**Unlocked Channel:** {interaction.channel.mention}")
+
+# --- /purge ---
+@bot.tree.command(name="purge", description="Delete messages in bulk.")
+@app_commands.checks.has_role(int(MOD_ROLE_ID))
+async def purge(interaction: discord.Interaction, amount: int, reason: str):
+    if amount < 1 or amount > 100:
+        await interaction.response.send_message("Amount must be between 1 and 100.", ephemeral=True)
+        return
+
+    messages = await interaction.channel.history(limit=amount).flatten()
+    transcript_text = "\n".join([f"[{m.created_at}] {m.author}: {m.content}" for m in messages])
+
+    # Write to a .txt file
+    transcript_file = discord.File(io.BytesIO(transcript_text.encode()), filename="purge_log.txt")
+
+    # Delete messages
+    await interaction.channel.purge(limit=amount)
+    await interaction.response.send_message(f"Purged {amount} messages. Reason: {reason}", ephemeral=True)
+
+    # Log action + file
+    log_channel = interaction.guild.get_channel(int(LOG_CHANNEL_ID))
+    if log_channel:
+        await log_channel.send(
+            content=f"**Purge in {interaction.channel.mention} by {interaction.user}**\nReason: {reason}",
+            file=transcript_file
+        )
+
+# --- /say ---
+@bot.tree.command(name="say", description="Make the bot say something as an embed.")
+@app_commands.checks.has_role(int(MOD_ROLE_ID))
+async def say(interaction: discord.Interaction, text: str):
+    embed = discord.Embed(description=text, color=discord.Color.blue())
+    await interaction.channel.send(embed=embed)
+    await interaction.response.send_message("Message sent.", ephemeral=True)
+    await log_action(interaction, f"**Say command used by {interaction.user}**\nContent: {text}")
+
 # Run bot
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
