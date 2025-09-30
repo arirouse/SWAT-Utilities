@@ -732,14 +732,14 @@ def home():
 threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
 # --- ON_READY EVENT (combined) ---
-
-
+@bot.event
+async def on_ready():
     # Add persistent views
     bot.add_view(TicketButtonsView(timeout=None))
     bot.add_view(TicketButtonsViewClaimed(timeout=None))
 
     # Set bot presence
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Created by RE3"))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="for slash commands | Created by RE3"))
 
     # Sync commands to guild
     try:
