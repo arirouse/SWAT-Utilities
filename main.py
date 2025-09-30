@@ -140,7 +140,7 @@ class TicketButtonsView(discord.ui.View):
     def __init__(self, *, timeout=None):
         super().__init__(timeout=timeout)
 
-  from discord import ui, Embed, ButtonStyle, Interaction
+from discord import ui, Embed, ButtonStyle, Interaction
 from datetime import datetime
 
 class TicketButtons(ui.View):
