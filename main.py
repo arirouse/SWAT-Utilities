@@ -669,6 +669,21 @@ def home():
 # Start Flask server in a background thread
 threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+
+    # Set bot activity (shows as "Watching Created by RE3")
+    await bot.change_presence(
+        activity=discord.Activity(type=discord.ActivityType.watching, name="Created by RE3")
+    )
+
+    # --- SYNC SLASH COMMANDS TO YOUR GUILD ---
+    guild = discord.Object(id=GUILD_ID)  # GUILD_ID is loaded from environment
+    await bot.tree.sync(guild=guild)
+
+    print("✅ Slash commands synced to guild!")
+
 # Run bot
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
