@@ -436,7 +436,6 @@ class TicketDropdown(discord.ui.Select):
 
         # Central helper log (no ping)
         await log_action("Ticket Created", user, ticket_channel, details=f"Type: {ticket_type}")
-
 # --- Panel Command (Persistent View + Logging) ---
 from discord import app_commands, Interaction, Embed
 from discord.ui import View
@@ -465,23 +464,24 @@ async def panel(interaction: Interaction):
 {ICON_6} HR+ Support
 {ICON_9} Speaking to Director/SHR+, told by HR to open and etc.
 """
+
         embed = Embed(
-            title=f"{LOGO_EMOJI} Open a Ticket",
+            title=f"{LOGO_EMOJI} Assistance",
             description=panel_description,
             color=EMBED_COLOR,
             timestamp=datetime.now(timezone.utc)
         )
 
         # --- Persistent View ---
-        view = View(timeout=None)  # Persistent view ensures buttons/dropdowns survive restarts
-        view.add_item(TicketDropdown())  # Your custom dropdown for ticket categories
-        bot.add_view(view)  # Make persistent across bot restarts
+        view = View(timeout=None)                  # Persistent view ensures buttons/dropdowns survive restarts
+        view.add_item(TicketDropdown())           # Your custom dropdown for ticket categories
+        bot.add_view(view)                         # Make persistent across bot restarts
 
         # --- Send Panel Message ---
         await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
 
         # --- Logging ---
-        log_channel = await get_log_channel(bot)  # your helper to fetch log channel
+        log_channel = await get_log_channel(bot)  # helper to fetch log channel
         if log_channel:
             log_embed = Embed(
                 title=f"{LOGO_EMOJI} Ticket Panel Posted",
