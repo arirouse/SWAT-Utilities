@@ -437,16 +437,23 @@ class TicketDropdown(discord.ui.Select):
         # Central helper log (no ping)
         await log_action("Ticket Created", user, ticket_channel, details=f"Type: {ticket_type}")
 
-# Panel command creation
-@bot.tree.command(name="panel", description="Post the ticket panel (mods only)")
-async def panel(interaction: discord.Interaction):
-    # Check moderator role
-    if not any(r.id == MOD_ROLE_ID for r in interaction.user.roles):
-        await interaction.response.send_message("You do not have permission to run this command.", ephemeral=True)
-        return
+# --- Panel Command (Persistent View + Logging) ---
+from discord import app_commands, Interaction, Embed
+from discord.ui import View
+from datetime import datetime, timezone
 
-    # Build the panel embed exact multi-line string per your spec
-    panel_description = f"""{ICON_3} Guidelines
+@bot.tree.command(name="panel", description="Post the ticket panel (mods only)")
+async def panel(interaction: Interaction):
+    try:
+        # --- Check Moderator Role ---
+        if not any(r.id == MOD_ROLE_ID for r in interaction.user.roles):
+            await interaction.response.send_message(
+                "You do not have permission to run this command.", ephemeral=True
+            )
+            return
+
+        # --- Panel Embed ---
+        panel_description = f"""{ICON_3} Guidelines
 {ICON_9} Tickets are designed for serious support matters only. Always select the correct category and clearly explain your issue so staff can assist quickly. Misuse of the ticket system, such as trolling or opening tickets without reason, may lead to warnings, ticket closures, or disciplinary action.
 
 {ICON_5} Desk Support
@@ -458,12 +465,40 @@ async def panel(interaction: discord.Interaction):
 {ICON_6} HR+ Support
 {ICON_9} Speaking to Director/SHR+, told by HR to open and etc.
 """
-    embed = discord.Embed(title=f"{LOGO_EMOJI} Open a Ticket", description=panel_description, color=EMBED_COLOR, timestamp=datetime.utcnow())
-    view = discord.ui.View()
-    view.add_item(TicketDropdown())
+        embed = Embed(
+            title=f"{LOGO_EMOJI} Open a Ticket",
+            description=panel_description,
+            color=EMBED_COLOR,
+            timestamp=datetime.now(timezone.utc)
+        )
 
-    # The panel message is visible to everyone. The fact a moderator ran it is not shown.
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
+        # --- Persistent View ---
+        view = View(timeout=None)  # Persistent view ensures buttons/dropdowns survive restarts
+        view.add_item(TicketDropdown())  # Your custom dropdown for ticket categories
+        bot.add_view(view)  # Make persistent across bot restarts
+
+        # --- Send Panel Message ---
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
+
+        # --- Logging ---
+        log_channel = await get_log_channel(bot)  # your helper to fetch log channel
+        if log_channel:
+            log_embed = Embed(
+                title=f"{LOGO_EMOJI} Ticket Panel Posted",
+                description=f"Moderator: {interaction.user.mention}\nChannel: {interaction.channel.mention}",
+                color=EMBED_COLOR,
+                timestamp=datetime.now(timezone.utc)
+            )
+            await log_channel.send(embed=log_embed)
+
+    except Exception as e:
+        print("Error in /panel command:", e)
+        try:
+            await interaction.response.send_message(
+                "Failed to send panel. Check the logs.", ephemeral=True
+            )
+        except:
+            pass
 
 # ---- /add and /remove commands (mod-only) ----
 @bot.tree.command(name="add", description="Add a user to the current ticket channel (mods only)")
